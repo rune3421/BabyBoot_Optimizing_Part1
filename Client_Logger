@@ -1,0 +1,167 @@
+#include <SD.h>
+#include <WiFi.h>
+#include <WebServer.h>
+#include <WebSocketsClient.h>
+#include <ArduinoJson.h>
+
+
+// Wifi Credentials
+const char* ssid = "NETGEAR76"; // Wifi SSID
+const char* password = "elegantplanet085"; //Wi-FI Password
+
+WebSocketsClient webSocket; // websocket client class instance
+
+StaticJsonDocument<100> doc; // Allocate a static JSON document
+
+File myFile;      //creates a file for the SD card to write to
+
+
+void setup() {
+  Serial.begin(115200);
+  
+  //Start SD Card
+  Serial.print("Initializing SD card...");
+ 
+  if (!SD.begin(5)) {
+    Serial.println("initialization failed!");
+    return;
+  }
+  Serial.println("initialization done.");
+
+    myFile = SD.open("/babyboot.txt", FILE_WRITE);
+  // if the file opened okay, write to it:
+  if (myFile) {
+    Serial.printf("Writing chart headers to %s ", "/babyboot.txt");
+    myFile.println("TIME,ECG,PPG,TEMP,CO2,pH,HEART RATE");
+    myFile.close(); // close the file:
+    Serial.println("completed.");
+  }   // if the file didn't open, print an error:
+  else {
+    Serial.println("error opening file ");
+    Serial.println("/babyboot.txt");
+  }
+  
+  // Connect to local WiFi
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    Serial.print(".");
+    delay(500);
+  }
+  Serial.println();
+  Serial.print("IP Address: ");
+  Serial.println(WiFi.localIP()); // Print local IP address
+
+  //address, port, and URL path 
+  webSocket.begin("192.168.1.25", 81, "/"); 
+  // webSocket event handler
+  webSocket.onEvent(webSocketEvent);
+  // if connection failed retry every 5s
+  webSocket.setReconnectInterval(5000);
+}
+
+
+void loop() {
+  webSocket.loop(); // Keep the socket alive
+}
+
+
+void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
+  switch (type)  {
+    case WStype_TEXT: // log response from client
+  {
+    
+    DeserializationError error = deserializeJson(doc, payload); // deserialize incoming Json String. Make sure to use this later for combining multiple throughputs
+    if (error) { // Print erro msg if incomig String is not JSON formated
+      Serial.print(F("deserializeJson() failed: "));
+      Serial.println(error.c_str());
+      return;
+    }
+    const float timer = doc["timer"];
+    const int ECG = doc["ECG"]; // Float variable for each analyte
+    const int PPG = doc["PPG"]; 
+    const float T = doc["T"]; 
+    const int C02 = doc["CO2"];
+    const int pH = doc["pH"];
+    const int HR = doc["HR"]; 
+    //const int RR = doc["RR"]; 
+
+    
+    //adds a new line of data to the SD card each time the websocket sends a set
+      myFile = SD.open("/babyboot.txt", FILE_APPEND);
+    //Serial.print("Writing to babyboot.txt...");
+    if(myFile){
+      myFile.print(timer);
+      myFile.printf(",");
+      myFile.print(ECG);
+      myFile.printf(",");
+      myFile.print(PPG);
+      myFile.printf(","); 
+      myFile.print(T);
+      myFile.printf(",");
+      myFile.print(C02);
+      myFile.printf(",");
+      myFile.print(pH);
+      myFile.printf(",");
+      myFile.println(HR);
+      myFile.printf(",");
+      //myFile.println(RR);
+      myFile.close();
+      } else {Serial.println("error opening babyboot.txt");}
+
+      // Print the received data to Serial for debugging 
+    Serial.print(timer);
+    Serial.printf(", ECG:");
+    Serial.print(ECG);
+    Serial.printf(", PPG:");
+    Serial.print(PPG);
+    Serial.printf(", T:"); 
+    Serial.print(T);
+    Serial.printf(", CO2:");
+    Serial.print(C02);
+    Serial.printf(", pH:");
+    Serial.print(pH);
+    Serial.printf(", HR:");
+    Serial.println(HR);
+    //Serial.printf(", RR:");
+    //Serial.println(RR);
+    break;
+  }
+    case WStype_DISCONNECTED:
+      Serial.printf("[WSc] Disconnected!\n");
+      break;
+    case WStype_CONNECTED:
+      Serial.printf("[WSc] Connected to url: %s\n", payload);
+
+      // send message to server when Connected
+      webSocket.sendTXT("Connected");
+      break;
+    case WStype_BIN:
+      Serial.printf("[%u] get binary length: %u\n", length);
+      Serial.println(payload[0]);
+
+      // send message to client
+      // webSocket.sendBIN(num, payload, length);
+      break;
+    case WStype_ERROR:
+      Serial.printf("Socket Error");
+      Serial.println(payload[0]); 
+      break;
+    case WStype_FRAGMENT_TEXT_START:
+      Serial.printf("Text Fragment Error");
+      Serial.println(payload[0]); 
+      break;
+    case WStype_FRAGMENT_BIN_START:
+      Serial.printf("Bin Fragment Error");
+      Serial.println(payload[0]); 
+      break;
+    case WStype_FRAGMENT:
+      Serial.printf("Fragment Error");
+      Serial.println(payload[0]); 
+      break;
+    case WStype_FRAGMENT_FIN:
+      Serial.printf("FIN Fragment Error");
+      Serial.println(payload[0]); 
+      break;
+  }
+
+}
